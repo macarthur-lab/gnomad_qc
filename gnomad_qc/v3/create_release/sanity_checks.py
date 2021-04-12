@@ -316,7 +316,7 @@ def histograms_sanity_check(
                 field_check_details=field_check_details,
                 check_description=check_description,
                 cond_expr=ht.info[check_field] != 0,
-                display_fields=[f"info.{check_field}"],
+                display_fields=[ht.info[check_field]],
             )
 
             if hist not in [
@@ -331,7 +331,7 @@ def histograms_sanity_check(
                     field_check_details=field_check_details,
                     check_description=check_description,
                     cond_expr=ht.info[check_field] != 0,
-                    display_fields=[f"info.{check_field}"],
+                    display_fields=[ht.info[check_field]],
                 )
 
     generic_field_check_loop(
@@ -363,7 +363,7 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
             field_check_details=field_check_details,
             check_description=f"{check_field} > 0",
             cond_expr=ht.info[check_field] <= 0,
-            display_fields=[f"info.{check_field}"],
+            display_fields=[ht.info[check_field]],
         )
 
         check_field = f"{subfield}-adj"
@@ -372,7 +372,7 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
             field_check_details=field_check_details,
             check_description=f"{check_field} >= 0",
             cond_expr=ht.info[check_field] < 0,
-            display_fields=[f"info.{check_field}", "filters"],
+            display_fields=[ht.info[check_field], ht.filters],
         )
 
     # Check raw AN > 0
@@ -382,7 +382,7 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
         field_check_details=field_check_details,
         check_description=f"{check_field} > 0",
         cond_expr=ht.info[check_field] <= 0,
-        display_fields=[f"info.{check_field}"],
+        display_fields=[ht.info[check_field]],
     )
 
     # Check adj AN >= 0
@@ -392,7 +392,7 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
         field_check_details=field_check_details,
         check_description=f"{check_field} >= 0",
         cond_expr=ht.info[check_field] < 0,
-        display_fields=[f"info.{check_field}"],
+        display_fields=[ht.info[check_field]],
     )
 
     # Check overall gnomad's raw subfields >= adj
@@ -404,7 +404,7 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
             field_check_details=field_check_details,
             check_description=f"{check_field_left} >= {check_field_right}",
             cond_expr=ht.info[check_field_left] < ht.info[check_field_right],
-            display_fields=[f"info.{check_field_left}", f"info.{check_field_right}"],
+            display_fields=[ht.info[check_field_left], ht.info[check_field_right]],
         )
         for subset in subsets:
             check_field_left = f"{subfield}-{subset}-raw"
@@ -415,8 +415,8 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
                 check_description=f"{check_field_left} >= {check_field_right}",
                 cond_expr=ht.info[check_field_left] < ht.info[check_field_right],
                 display_fields=[
-                    f"info.{check_field_left}",
-                    f"info.{check_field_right}",
+                    ht.info[check_field_left],
+                    ht.info[check_field_right],
                 ],
             )
 
@@ -451,8 +451,8 @@ def frequency_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool) -> 
                 check_description=f"{check_field_left} != {check_field_right}",
                 cond_expr=ht.info[check_field_left] == ht.info[check_field_right],
                 display_fields=[
-                    f"info.{check_field_left}",
-                    f"info.{check_field_right}",
+                    ht.info[check_field_left],
+                    ht.info[check_field_right],
                 ],
             )
 
@@ -474,7 +474,7 @@ def sample_sum_check(
     verbose: bool,
     subpop: bool = None,
     sort_order: List[str] = LABEL_GROUP_SORT_ORDER,
-) -> None:
+):
     """
     Compute afresh the sum of annotations for a specified group of annotations, and compare to the annotated version;
     display results from checking the sum of the specified annotations in the terminal.
@@ -502,12 +502,11 @@ def sample_sum_check(
         sorted(label_groups.keys(), key=lambda x: sort_order.index(x))
     )
     annot_dict = {
-        f"sum_AC-{group}-{alt_groups}": hl.sum(combo_AC),
-        f"sum_AN-{group}-{alt_groups}": hl.sum(combo_AN),
-        f"sum_nhomalt-{group}-{alt_groups}": hl.sum(combo_nhomalt),
+        f"sum_AC": hl.sum(combo_AC),
+        f"sum_AN": hl.sum(combo_AN),
+        f"sum_nhomalt": hl.sum(combo_nhomalt),
     }
 
-    ht = ht.annotate(**annot_dict)
     field_check_expr = {}
     field_check_details = {}
     for subfield in ["AC", "AN", "nhomalt"]:
@@ -517,8 +516,8 @@ def sample_sum_check(
             field_check_expr=field_check_expr,
             field_check_details=field_check_details,
             check_description=f"{check_field_left} = {check_field_right}",
-            cond_expr=ht.info[check_field_left] != ht[check_field_right],
-            display_fields=[check_field_left, check_field_right],
+            cond_expr=ht.info[check_field_left] != annot_dict[f"sum_{subfield}"],
+            display_fields=[ht.info[check_field_left], annot_dict[f"sum_{subfield}"]],
         )
 
     return field_check_expr, field_check_details
@@ -637,9 +636,8 @@ def sex_chr_sanity_checks(
             field_check_expr=field_check_expr,
             field_check_details=field_check_details,
             check_description=f"{check_field_left} == {check_field_right}",
-            cond_expr=ht_xnonpar.info[check_field_left]
-            != ht_xnonpar.info[check_field_right],
-            display_fields=[f"info.{check_field_left}", f"info.{check_field_right}"],
+            cond_expr=ht_xnonpar.info[check_field_left] != ht_xnonpar.info[check_field_right],
+            display_fields=[ht_xnonpar.info[check_field_left], ht_xnonpar.info[check_field_right]],
         )
 
     generic_field_check_loop(ht_xnonpar, field_check_expr, field_check_details, verbose)
