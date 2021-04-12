@@ -4,9 +4,11 @@ from typing import Dict, List, Optional
 import hail as hl
 
 from gnomad.utils.vcf import make_label_combos
-#from gnomad_qc.v3.prepare_vcf_data_release import make_label_combos
+
+# from gnomad_qc.v3.prepare_vcf_data_release import make_label_combos
 from gnomad.assessment.sanity_checks import (
     generic_field_check,
+    generic_field_check_expr,
     make_filters_sanity_check_expr,
 )
 from gnomad.utils.vcf import HISTS
@@ -262,6 +264,31 @@ def filters_sanity_check(ht: hl.Table) -> None:
     )
 
 
+def make_field_check_structs(
+    field_check_expr, field_check_details, check_description, cond_expr, display_fields
+):
+    cond_expr = cond_expr
+    field_check_expr[check_description] = generic_field_check_expr(cond_expr)
+    field_check_details[check_description] = hl.struct(
+        cond_expr=cond_expr, display_fields=display_fields
+    )
+
+    return field_check_expr, field_check_details
+
+
+def generic_field_check_loop(ht, field_check_expr, field_check_details, verbose):
+    ht_field_check_counts = ht.aggregate(hl.struct(**field_check_expr))
+    for check_description, n_fail in ht_field_check_counts.items():
+        generic_field_check(
+            ht,
+            cond_expr=field_check_details[check_description].cond_expr,
+            check_description=check_description,
+            n_fail=n_fail,
+            display_fields=field_check_details[check_description].display_fields,
+            verbose=verbose,
+        )
+
+
 def histograms_sanity_check(
     ht: hl.Table, verbose: bool, hists: List[str] = HISTS
 ) -> None:
@@ -274,33 +301,42 @@ def histograms_sanity_check(
     :return: None
     :rtype: None
     """
+    field_check_expr = {}
+    field_check_details = {}
     for hist in hists:
         for suffix in ["", "raw"]:
             if suffix == "raw":
-                logger.info("Checking raw qual hists...")
                 hist = f"{hist}_{suffix}"
-            else:
-                logger.info("Checking adj qual hists...")
 
             # Check subfield == 0
-            generic_field_check(
-                ht,
-                cond_expr=(ht.info[f"{hist}_n_smaller"] != 0),
-                check_description=f"{hist}_n_smaller == 0",
-                display_fields=[f"info.{hist}_n_smaller"],
-                verbose=verbose,
+            check_field = f"{hist}_n_smaller"
+            check_description = f"{check_field} == 0"
+            field_check_expr, field_check_details = make_field_check_structs(
+                field_check_expr=field_check_expr,
+                field_check_details=field_check_details,
+                check_description=check_description,
+                cond_expr=ht.info[check_field] != 0,
+                display_fields=[f"info.{check_field}"],
             )
+
             if hist not in [
                 "dp_hist_alt",
                 "dp_hist_all",
             ]:  # NOTE: DP hists can have nonzero values in n_larger bin
-                generic_field_check(
-                    ht,
-                    cond_expr=(ht.info[f"{hist}_n_larger"] != 0),
-                    check_description=f"{hist}_n_larger == 0",
-                    display_fields=[f"info.{hist}_n_larger"],
-                    verbose=verbose,
+                check_field = f"{hist}_n_larger"
+                check_description = f"{check_field} == 0"
+
+                field_check_expr, field_check_details = make_field_check_structs(
+                    field_check_expr=field_check_expr,
+                    field_check_details=field_check_details,
+                    check_description=check_description,
+                    cond_expr=ht.info[check_field] != 0,
+                    display_fields=[f"info.{check_field}"],
                 )
+
+    generic_field_check_loop(
+        ht, field_check_expr, field_check_details, verbose,
+    )
 
 
 def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
@@ -317,68 +353,74 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
     :return: None
     :rtype: None
     """
+    field_check_expr = {}
+    field_check_details = {}
     for subfield in ["AC", "AF"]:
         # Check raw AC, AF > 0
-
-        generic_field_check(
-            ht,
-            cond_expr=(ht.info[f"{subfield}-raw"] <= 0),
-            check_description=f"{subfield}-raw > 0",
-            display_fields=[f"info.{subfield}-raw"],
-            verbose=verbose,
+        check_field = f"{subfield}-raw"
+        field_check_expr, field_check_details = make_field_check_structs(
+            field_check_expr=field_check_expr,
+            field_check_details=field_check_details,
+            check_description=f"{check_field} > 0",
+            cond_expr=ht.info[check_field] <= 0,
+            display_fields=[f"info.{check_field}"],
         )
-        # Check adj AC, AF >=0
-        generic_field_check(
-            ht,
-            cond_expr=(ht.info[f"{subfield}-adj"] < 0),
-            check_description=f"{subfield}-adj >= 0",
-            display_fields=[f"info.{subfield}_-dj", "filters"],
-            verbose=verbose,
+
+        check_field = f"{subfield}-adj"
+        field_check_expr, field_check_details = make_field_check_structs(
+            field_check_expr=field_check_expr,
+            field_check_details=field_check_details,
+            check_description=f"{check_field} >= 0",
+            cond_expr=ht.info[check_field] < 0,
+            display_fields=[f"info.{check_field}", "filters"],
         )
 
     # Check raw AN > 0
-    generic_field_check(
-        ht,
-        cond_expr=(ht.info["AN-raw"] <= 0),
-        check_description="AN-raw > 0",
-        display_fields=["info.AN-raw"],
-        verbose=verbose,
+    check_field = "AN-raw"
+    field_check_expr, field_check_details = make_field_check_structs(
+        field_check_expr=field_check_expr,
+        field_check_details=field_check_details,
+        check_description=f"{check_field} > 0",
+        cond_expr=ht.info[check_field] <= 0,
+        display_fields=[f"info.{check_field}"],
     )
 
     # Check adj AN >= 0
-    generic_field_check(
-        ht,
-        cond_expr=(ht.info["AN-adj"] < 0),
-        check_description="AN-adj >= 0",
-        display_fields=["info.AN-adj"],
-        verbose=verbose,
+    check_field = "AN-adj"
+    field_check_expr, field_check_details = make_field_check_structs(
+        field_check_expr=field_check_expr,
+        field_check_details=field_check_details,
+        check_description=f"{check_field} >= 0",
+        cond_expr=ht.info[check_field] < 0,
+        display_fields=[f"info.{check_field}"],
     )
+
     # Check overall gnomad's raw subfields >= adj
     for subfield in ["AC", "AN", "nhomalt"]:
-        generic_field_check(
-            ht,
-            cond_expr=(ht.info[f"{subfield}-raw"] < ht.info[f"{subfield}-adj"]),
-            check_description=f"{subfield}-raw >= {subfield}-adj",
-            display_fields=[f"info.{subfield}-raw", f"info.{subfield}-adj",],
-            verbose=verbose,
+        check_field_left = f"{subfield}-raw"
+        check_field_right = f"{subfield}-adj"
+        field_check_expr, field_check_details = make_field_check_structs(
+            field_check_expr=field_check_expr,
+            field_check_details=field_check_details,
+            check_description=f"{check_field_left} >= {check_field_right}",
+            cond_expr=ht.info[check_field_left] < ht.info[check_field_right],
+            display_fields=[f"info.{check_field_left}", f"info.{check_field_right}"],
         )
-
-    for subset in subsets:
-        for subfield in ["AC", "AN", "nhomalt"]:
-            # Check AC_raw >= AC adj
-            generic_field_check(
-                ht,
-                cond_expr=(
-                    ht.info[f"{subfield}-{subset}-raw"]
-                    < ht.info[f"{subfield}-{subset}-adj"]
-                ),
-                check_description=f"{subfield}-{subset}-raw >= {subfield}-{subset}-adj",
+        for subset in subsets:
+            check_field_left = f"{subfield}-{subset}-raw"
+            check_field_right = f"{subfield}-{subset}-adj"
+            field_check_expr, field_check_details = make_field_check_structs(
+                field_check_expr=field_check_expr,
+                field_check_details=field_check_details,
+                check_description=f"{check_field_left} >= {check_field_right}",
+                cond_expr=ht.info[check_field_left] < ht.info[check_field_right],
                 display_fields=[
-                    f"info.{subfield}-{subset}-raw",
-                    f"info.{subfield}-{subset}-adj",
+                    f"info.{check_field_left}",
+                    f"info.{check_field_right}",
                 ],
-                verbose=verbose,
             )
+
+    generic_field_check_loop(ht, field_check_expr, field_check_details, verbose)
 
 
 def frequency_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool) -> None:
@@ -397,21 +439,24 @@ def frequency_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool) -> 
     :return: None
     :rtype: None
     """
+    field_check_expr = {}
+    field_check_details = {}
     for subset in subsets:
         for subfield in ["AC", "AN", "nhomalt"]:
-            logger.info("adj checks")
-            generic_field_check(
-                ht,
-                cond_expr=(
-                    ht.info[f"{subfield}-adj"] == ht.info[f"{subfield}-{subset}-adj"]
-                ),
-                check_description=f"{subfield}-adj != {subfield}-{subset}-adj",
+            check_field_left = f"{subfield}-adj"
+            check_field_right = f"{subfield}-{subset}-adj"
+            field_check_expr, field_check_details = make_field_check_structs(
+                field_check_expr=field_check_expr,
+                field_check_details=field_check_details,
+                check_description=f"{check_field_left} != {check_field_right}",
+                cond_expr=ht.info[check_field_left] == ht.info[check_field_right],
                 display_fields=[
-                    f"info.{subfield}-adj",
-                    f"info.{subfield}-{subset}-adj",
+                    f"info.{check_field_left}",
+                    f"info.{check_field_right}",
                 ],
-                verbose=verbose,
             )
+
+    generic_field_check_loop(ht, field_check_expr, field_check_details, verbose)
 
     freq_counts = ht.aggregate(
         hl.struct(
@@ -463,21 +508,20 @@ def sample_sum_check(
     }
 
     ht = ht.annotate(**annot_dict)
-
+    field_check_expr = {}
+    field_check_details = {}
     for subfield in ["AC", "AN", "nhomalt"]:
-        generic_field_check(
-            ht,
-            (
-                ht.info[f"{subfield}-{prefix}{group}"]
-                != ht[f"sum_{subfield}-{group}-{alt_groups}"]
-            ),
-            f"{subfield}-{prefix}{group} = sum({subfield}-{group}-{alt_groups})",
-            [
-                f"info.{subfield}-{prefix}{group}",
-                f"sum_{subfield}-{group}-{alt_groups}",
-            ],
-            verbose,
+        check_field_left = f"{subfield}-{prefix}{group}"
+        check_field_right = f"sum_{subfield}-{group}-{alt_groups}"
+        field_check_expr, field_check_details = make_field_check_structs(
+            field_check_expr=field_check_expr,
+            field_check_details=field_check_details,
+            check_description=f"{check_field_left} = {check_field_right}",
+            cond_expr=ht.info[check_field_left] != ht[check_field_right],
+            display_fields=[check_field_left, check_field_right],
         )
+
+    return field_check_expr, field_check_details
 
 
 def sample_sum_sanity_checks(
@@ -505,6 +549,8 @@ def sample_sum_sanity_checks(
     # Add "" for sum checks on entire callset
     subsets.append("")
     # Perform sample sum checks per subset
+    field_check_expr = {}
+    field_check_details = {}
     for subset in subsets:
         pop_names = pops
         if subset == "hgdp":
@@ -512,14 +558,26 @@ def sample_sum_sanity_checks(
         if subset == "tgp":
             pop_names = TGP_POPS
 
-        sample_sum_check(ht, subset, dict(group=["adj"], pop=pop_names), verbose)
-        sample_sum_check(ht, subset, dict(group=["adj"], sex=sexes), verbose)
-        sample_sum_check(
+        field_check_expr_s, field_check_details_s = sample_sum_check(
+            ht, subset, dict(group=["adj"], pop=pop_names), verbose
+        )
+        field_check_expr.update(field_check_expr_s)
+        field_check_details.update(field_check_details_s)
+        field_check_expr_s, field_check_details_s = sample_sum_check(
+            ht, subset, dict(group=["adj"], sex=sexes), verbose
+        )
+        field_check_expr.update(field_check_expr_s)
+        field_check_details.update(field_check_details_s)
+        field_check_expr_s, field_check_details_s = sample_sum_check(
             ht,
             subset,
             dict(group=["adj"], pop=list(set(pop_names)), sex=sexes),
             verbose,
         )
+        field_check_expr.update(field_check_expr_s)
+        field_check_details.update(field_check_details_s)
+
+        generic_field_check_loop(ht, field_check_expr, field_check_details, verbose)
 
 
 def sex_chr_sanity_checks(
@@ -569,15 +627,22 @@ def sex_chr_sanity_checks(
 
     logger.info("Check (nhomalt == nhomalt_female) for X nonpar variants:")
     female_metrics = [x for x in female_metrics if "nhomalt" in x]
+    field_check_expr = {}
+    field_check_details = {}
     for metric in female_metrics:
         standard_field = metric.replace("-female", "").replace("-XX", "")
-        generic_field_check(
-            ht_xnonpar,
-            (ht_xnonpar.info[f"{metric}"] != ht_xnonpar.info[f"{standard_field}"]),
-            f"{metric} == {standard_field}",
-            [f"info.{metric}", f"info.{standard_field}"],
-            verbose,
+        check_field_left = f"{metric}"
+        check_field_right = f"{standard_field}"
+        field_check_expr, field_check_details = make_field_check_structs(
+            field_check_expr=field_check_expr,
+            field_check_details=field_check_details,
+            check_description=f"{check_field_left} == {check_field_right}",
+            cond_expr=ht_xnonpar.info[check_field_left]
+            != ht_xnonpar.info[check_field_right],
+            display_fields=[f"info.{check_field_left}", f"info.{check_field_right}"],
         )
+
+    generic_field_check_loop(ht_xnonpar, field_check_expr, field_check_details, verbose)
 
 
 def missingness_sanity_checks(
