@@ -212,6 +212,7 @@ def populate_subset_info_dict(
     :param label_delimiter: String to use as delimiter when making group label combinations.
     :return: Dictionary containing Subset specific INFO header fields.
     """
+
     def _create_label_groups(
         pops: Union[Dict[str, str], List[str]],
         sexes: List[str],
@@ -865,7 +866,7 @@ def main(args):
 
             logger.info(f"Export chromosome {chromosome}....")
             if args.test:
-                output_path = f"{qc_temp_prefix}/gnomad.genomes_vcf_test{'hgdp_1kg_subset' if args.hgdp_1kg_subset else None}.vcf.bgz"
+                output_path = f"{qc_temp_prefix()}/gnomad.genomes_vcf_test{'hgdp_1kg_subset' if args.hgdp_1kg_subset else ''}.vcf.bgz"
             else:
                 output_path = release_vcf_path(
                     contig=chromosome,
@@ -882,7 +883,7 @@ def main(args):
 
     finally:
         logger.info("Copying hail log to logging bucket...")
-        hl.copy_log(f"{qc_temp_prefix}/logs/vcf_export.log")
+        hl.copy_log(f"{qc_temp_prefix()}/logs/vcf_export.log")
 
 
 if __name__ == "__main__":
