@@ -337,7 +337,9 @@ def histograms_sanity_check(
     )
 
 
-def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
+def raw_and_adj_sanity_checks(
+    ht: hl.Table, subsets: List[str], subset_before_metric, verbose: bool
+):
     """
     Performs sanity checks on raw and adj data in input Table.
     Checks that:
@@ -412,8 +414,22 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
             ),
         )
         for subset in subsets:
-            check_field_left = f"{subfield}-{subset}-raw"
-            check_field_right = f"{subfield}-{subset}-adj"
+            label_delimiter = "-"
+            if subset_before_metric:
+                check_field_left = (
+                    f"{subset}{label_delimiter}{subfield}{label_delimiter}raw"
+                )
+                check_field_right = (
+                    f"{subset}{label_delimiter}{subfield}{label_delimiter}adj"
+                )
+            else:
+                check_field_left = (
+                    f"{subfield}{label_delimiter}{subset}{label_delimiter}raw"
+                )
+                check_field_right = (
+                    f"{subfield}{label_delimiter}{subset}{label_delimiter}adj"
+                )
+
             field_check_expr, field_check_details = make_field_check_structs(
                 field_check_expr=field_check_expr,
                 field_check_details=field_check_details,
@@ -430,7 +446,9 @@ def raw_and_adj_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool):
     generic_field_check_loop(ht, field_check_expr, field_check_details, verbose)
 
 
-def frequency_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool) -> None:
+def frequency_sanity_checks(
+    ht: hl.Table, subsets: List[str], subset_before_metric: bool, verbose: bool
+) -> None:
     """
     Performs sanity checks on frequency data in input Table.
     Checks:
@@ -448,10 +466,18 @@ def frequency_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool) -> 
     """
     field_check_expr = {}
     field_check_details = {}
+    label_delimiter = "-"
     for subset in subsets:
         for subfield in ["AC", "AN", "nhomalt"]:
             check_field_left = f"{subfield}-adj"
-            check_field_right = f"{subfield}-{subset}-adj"
+            if subset_before_metric:
+                check_field_right = (
+                    f"{subset}{label_delimiter}{subfield}{label_delimiter}adj"
+                )
+            else:
+                check_field_right = (
+                    f"{subfield}{label_delimiter}{subset}{label_delimiter}adj"
+                )
             field_check_expr, field_check_details = make_field_check_structs(
                 field_check_expr=field_check_expr,
                 field_check_details=field_check_details,
@@ -479,6 +505,7 @@ def frequency_sanity_checks(ht: hl.Table, subsets: List[str], verbose: bool) -> 
 def sample_sum_check(
     ht: hl.Table,
     prefix: str,
+    prefix_before_metric,
     label_groups: Dict[str, List[str]],
     verbose: bool,
     subpop: bool = None,
@@ -498,29 +525,41 @@ def sample_sum_check(
     :param sort_order: List containing order to sort label group combinations. Default is SORT_ORDER.
     :return: None
     """
+    label_delimiter = "-"
+
     if prefix != "":
-        prefix += "-"
+        prefix += label_delimiter
 
-    label_combos = make_label_combos(label_groups, label_delimiter="-")
-    combo_AC = [ht.info[f"AC-{prefix}{x}"] for x in label_combos]
-    combo_AN = [ht.info[f"AN-{prefix}{x}"] for x in label_combos]
-    combo_nhomalt = [ht.info[f"nhomalt-{prefix}{x}"] for x in label_combos]
-
+    label_combos = make_label_combos(label_groups, label_delimiter=label_delimiter)
     group = label_groups.pop("group")[0]
     alt_groups = "_".join(
         sorted(label_groups.keys(), key=lambda x: sort_order.index(x))
     )
-    annot_dict = {
-        f"sum_AC": hl.sum(combo_AC),
-        f"sum_AN": hl.sum(combo_AN),
-        f"sum_nhomalt": hl.sum(combo_nhomalt),
-    }
+    info_fields = ht.info.keys()
+
+    annot_dict = {}
+    for subfield in ["AC", "AN", "nhomalt"]:
+        subfield_values = []
+        for x in label_combos:
+            if prefix_before_metric:
+                field = f"{prefix}{subfield}{label_delimiter}{x}"
+            else:
+                field = f"{subfield}{label_delimiter}{prefix}{x}"
+
+            if field in info_fields:
+                subfield_values.append(ht.info[field])
+
+        annot_dict[f"sum_{subfield}"]= hl.sum(subfield_values)
 
     field_check_expr = {}
     field_check_details = {}
     for subfield in ["AC", "AN", "nhomalt"]:
-        check_field_left = f"{subfield}-{prefix}{group}"
-        check_field_right = f"sum_{subfield}-{group}-{alt_groups}"
+        if prefix_before_metric:
+            check_field_left = f"{prefix}{subfield}{label_delimiter}{group}"
+        else:
+            check_field_left = f"{subfield}{label_delimiter}{prefix}{group}"
+
+        check_field_right = f"sum_{subfield}{label_delimiter}{group}{label_delimiter}{alt_groups}"
         field_check_expr, field_check_details = make_field_check_structs(
             field_check_expr=field_check_expr,
             field_check_details=field_check_details,
@@ -540,10 +579,12 @@ def sample_sum_check(
 def sample_sum_sanity_checks(
     ht: hl.Table,
     subsets: List[str],
+    subset_before_metric,
     info_metrics: List[str],
-    verbose: bool,
     pops: List[str] = POPS,
     sexes: List[str] = SEXES,
+    subset_pops: Dict[str, List[str]] = {"hgdp": HGDP_POPS, "tgp": TGP_POPS},
+    verbose: bool = False,
 ) -> None:
     """
     Performs sanity checks on sample sums in input Table.
@@ -566,24 +607,27 @@ def sample_sum_sanity_checks(
     field_check_details = {}
     for subset in subsets:
         pop_names = pops
-        if subset == "hgdp":
-            pop_names = HGDP_POPS
-        if subset == "tgp":
-            pop_names = TGP_POPS
+        if subset_pops and subset in subset_pops:
+            pop_names = subset_pops[subset]
 
         field_check_expr_s, field_check_details_s = sample_sum_check(
-            ht, subset, dict(group=["adj"], pop=pop_names), verbose
+            ht,
+            subset,
+            subset_before_metric,
+            dict(group=["adj"], pop=pop_names),
+            verbose,
         )
         field_check_expr.update(field_check_expr_s)
         field_check_details.update(field_check_details_s)
         field_check_expr_s, field_check_details_s = sample_sum_check(
-            ht, subset, dict(group=["adj"], sex=sexes), verbose
+            ht, subset, subset_before_metric, dict(group=["adj"], sex=sexes), verbose
         )
         field_check_expr.update(field_check_expr_s)
         field_check_details.update(field_check_details_s)
         field_check_expr_s, field_check_details_s = sample_sum_check(
             ht,
             subset,
+            subset_before_metric,
             dict(group=["adj"], pop=list(set(pop_names)), sex=sexes),
             verbose,
         )
@@ -778,6 +822,8 @@ def vcf_field_check(
 def sanity_check_release_ht(
     ht: hl.Table,
     subsets: List[str],
+    subset_before_metric: bool = False,
+    subset_pops: Dict[str, List[str]] = {"hgdp": HGDP_POPS, "tgp": TGP_POPS},
     missingness_threshold: float = 0.5,
     verbose: bool = True,
 ) -> None:
@@ -809,10 +855,10 @@ def sanity_check_release_ht(
     histograms_sanity_check(ht, verbose=verbose)
 
     logger.info("RAW AND ADJ CHECKS:")
-    raw_and_adj_sanity_checks(ht, subsets, verbose)
+    raw_and_adj_sanity_checks(ht, subsets, subset_before_metric, verbose)
 
     logger.info("FREQUENCY CHECKS:")
-    frequency_sanity_checks(ht, subsets, verbose)
+    frequency_sanity_checks(ht, subsets, subset_before_metric, verbose)
 
     # Pull row annotations from HT
     info_metrics = list(ht.row.info)
@@ -820,7 +866,14 @@ def sanity_check_release_ht(
     non_info_metrics.remove("info")
 
     logger.info("SAMPLE SUM CHECKS:")
-    sample_sum_sanity_checks(ht, subsets, info_metrics, verbose)
+    sample_sum_sanity_checks(
+        ht,
+        subsets,
+        subset_before_metric,
+        info_metrics,
+        subset_pops=subset_pops,
+        verbose=verbose,
+    )
 
     logger.info("SEX CHROMOSOME ANNOTATION CHECKS:")
     contigs = ht.aggregate(hl.agg.collect_as_set(ht.locus.contig))
